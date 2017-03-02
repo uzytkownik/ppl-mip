@@ -16,9 +16,27 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  -- exposed-modules:     
-  -- other-modules:       
-  -- other-extensions:    
-  build-depends:       base >=4.8 && <4.9
-  -- hs-source-dirs:      
+  hs-source-dirs:      src
+  exposed-modules:     Data.PPL.MIP
+  other-modules:       Foreign.PPL
+  other-extensions:    FlexibleInstances,
+                       MultiParamTypeClasses
+  build-depends:       base >=4.9 && <4.10,
+                       containers >= 0.5.7.1 && < 0.6.0.0,
+                       lens >=4.14 && <4.15,
+                       mtl >= 2.2.1 && < 2.3.0
+  extra-libraries:     gmp, ppl_c
   default-language:    Haskell2010
+  ghc-options:         -Wall -Werror
+
+test-suite test-ppl
+  hs-source-dirs:      tests
+  type:                exitcode-stdio-1.0
+  main-is:             Test.hs
+  build-depends:       base >=4.9 && <4.10,
+                       ppl-mip,
+                       lens >=4.14 && <4.15,
+                       QuickCheck >= 2.9.2 && <2.10
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
