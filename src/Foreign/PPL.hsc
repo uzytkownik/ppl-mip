@@ -235,6 +235,7 @@ foreign import ccall "&PPL_MIP_PROBLEM_STATUS_OPTIMIZED" pPL_MIP_PROBLEM_STATUS_
 
 newtype PPLMIPProblem = PPLMIPProblem (ForeignPtr PPLMIPProblem)
 
+-- | Objective function (either minimizes or maximizes)
 data Objective o = Maximize o | Minimize o
 
 instance Functor Objective where
@@ -249,6 +250,7 @@ instance Traversable Objective where
   traverse f (Maximize v) = Maximize <$> f v
   traverse f (Minimize v) = Minimize <$> f v
 
+-- | Result of MIP problem
 data SolutionResult a = Unfeasable | Unbounded | Optimized a deriving (Eq,Show)
 
 instance Functor SolutionResult where

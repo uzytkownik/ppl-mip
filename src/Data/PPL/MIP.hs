@@ -9,24 +9,28 @@ module Data.PPL.MIP
     Var,
     LinearExpression,
     AffineExpression,
+    HasLinearExpression,
     AffineExpressionLike,
     Constraints,
     Objective(..),
     Integers(..),
     SolutionResult,
     MIPSolution,
-    (%+),
-    (%-),
     (%*),
     (%/),
+    (%+),
+    (%-),
+    (%<),
     (%<=),
     (%==),
     (%>=),
+    (%>),
     (%&&),
     var,
     sc,
+    lpSolve,
     mipSolve,
-
+    -- * Lens helpers
     name,
     constant,
     _Unfeasable,
@@ -46,24 +50,33 @@ import           Data.Typeable
 import           Foreign.PPL
 import           System.IO.Unsafe
 
+-- | A free variable in equation.
 newtype Var = Var {_name :: String} deriving (Eq, Ord, Typeable)
+
+instance Show Var where
+  show (Var v) = v
 
 makeLenses ''Var
 
+-- | Make variable out of `String`.
 var :: String -> Var
 var = Var
 
+-- | Create a scalar. This is equivalend to `id` specialized to `Rational`.
 sc :: Rational -> Rational
 sc = id
 
+-- | Linear expression (function). This is a linear combination of `Var`s
+-- without a scalar component.
 newtype LinearExpression = LinearExpression {_coeff_ :: Map Var Rational} deriving (Eq, Ord, Typeable)
+-- | Affine expression. This is a sum of linear component and a scalar.
 data AffineExpression = AffineExpression {_linear_ :: LinearExpression, _constant :: Rational} deriving (Eq, Ord, Typeable)
 
 makeClassy ''LinearExpression
 makeLenses ''AffineExpression
 
 instance HasLinearExpression AffineExpression where
-    linearExpression = linear_
+  linearExpression = linear_
 
 type instance Index LinearExpression = Var
 type instance IxValue LinearExpression = Rational
@@ -72,6 +85,7 @@ instance Ixed LinearExpression where
            where conv 0 = Nothing
                  conv x = Just $! x
 
+-- | Anything that can be converted to an affine expression
 class AffineExpressionLike l where
   toAffineExpression :: l -> AffineExpression
 
@@ -87,8 +101,10 @@ instance AffineExpressionLike Rational where
 instance AffineExpressionLike Var where
   toAffineExpression v = AffineExpression (LinearExpression (M.singleton v 1)) 0
 
-class AffineExpressionLike b => ScalarMultiple a b | a -> b where
+class ScalarMultiple a b | a -> b where
+  -- | Multiply by a rational number
   (%*) :: Rational -> a -> b
+  -- | Divide by a rational number
   (%/) :: a -> Rational -> b
   e %/ v = (1 / v) %* e
 
@@ -103,79 +119,97 @@ instance ScalarMultiple LinearExpression LinearExpression where
 instance ScalarMultiple AffineExpression AffineExpression where
   (%*) a = (coeff_ . traversed %~ (* a)) . (constant %~ (* a))
 
-class Additive a b c | a b -> c where
+class Add a b c | a b -> c where
+  -- | Add two expressions
   (%+) :: a -> b -> c
+  -- | Divide two expressions
   (%-) :: a -> b -> c
 
 infixl 6 %+, %-
 
-instance Additive Var Var LinearExpression where
+instance Add Var Var LinearExpression where
    v %+ v' = LinearExpression $! M.unionWith (+) (M.singleton v 1) (M.singleton v' 1)
    v %- v' = LinearExpression $! M.unionWith (+) (M.singleton v 1) (M.singleton v' (-1))
 
-instance Additive LinearExpression LinearExpression LinearExpression where
+instance Add LinearExpression LinearExpression LinearExpression where
   (LinearExpression le) %+ (LinearExpression le') = LinearExpression $! M.unionWith (+) le le'
   (LinearExpression le) %- (LinearExpression le') = LinearExpression $! M.unionWith (+) le (M.map negate le')
 
-instance Additive LinearExpression Var LinearExpression where
+instance Add LinearExpression Var LinearExpression where
   (LinearExpression le) %+ v = LinearExpression $! M.unionWith (+) le (M.singleton v 1)
   (LinearExpression le) %- v = LinearExpression $! M.unionWith (+) le (M.singleton v (-1))
 
-instance Additive Var LinearExpression LinearExpression where
+instance Add Var LinearExpression LinearExpression where
   v %+ (LinearExpression le) = LinearExpression $! M.unionWith (+) (M.singleton v 1) le
   v %- le = v %+ (-1) %* le
 
-instance Additive LinearExpression Rational AffineExpression where
+instance Add LinearExpression Rational AffineExpression where
   le %+ r = AffineExpression le r
   le %- r = AffineExpression le (negate r)
 
-instance Additive Rational LinearExpression AffineExpression where
+instance Add Rational LinearExpression AffineExpression where
   r %+ le = AffineExpression le r
   r %- le = AffineExpression ((-1) %* le) r
 
-instance Additive AffineExpression AffineExpression AffineExpression where
+instance Add AffineExpression AffineExpression AffineExpression where
   (AffineExpression le s) %+ (AffineExpression le' s') = AffineExpression (le %+ le') (s + s')
   (AffineExpression le s) %- (AffineExpression le' s') = AffineExpression (le %- le') (s - s')
 
-instance Additive AffineExpression Var AffineExpression where
+instance Add AffineExpression Var AffineExpression where
   (AffineExpression le s) %+ v = AffineExpression (le %+ v) s
   (AffineExpression le s) %- v = AffineExpression (le %- v) s
 
-instance Additive Var AffineExpression AffineExpression where
+instance Add Var AffineExpression AffineExpression where
   v %+ (AffineExpression le s) = AffineExpression (v %+ le) s
   v %- (AffineExpression le s) = AffineExpression (v %- le) (negate s)
 
-instance Additive AffineExpression Rational AffineExpression where
+instance Add AffineExpression Rational AffineExpression where
   (AffineExpression le s) %+ r = AffineExpression le (s + r)
   (AffineExpression le s) %- r = AffineExpression le (s - r)
 
-instance Additive Rational AffineExpression AffineExpression where
+instance Add Rational AffineExpression AffineExpression where
   r %+ (AffineExpression le s) = AffineExpression le (r + s)
   r %- (AffineExpression le s) = AffineExpression ((-1) %* le) (r - s)
 
 data Constraints = Constraints [(AffineExpression, ConstraintType)] deriving (Eq,Typeable)
 
+-- | Declares that first argument is lower to second one.
+(%<) :: (AffineExpressionLike l, AffineExpressionLike l') =>
+        l -> l' -> Constraints
+l %< l' = Constraints [(toAffineExpression l' %- toAffineExpression l, GreaterThan)]
+
+-- | Declares that first argument is lower or equal to second one.
 (%<=) :: (AffineExpressionLike l, AffineExpressionLike l') =>
          l -> l' -> Constraints
 l %<= l' = Constraints [(toAffineExpression l' %- toAffineExpression l, GreaterOrEqual)]
 
+-- | Declares that both arguments are equal.
 (%==) :: (AffineExpressionLike l, AffineExpressionLike l') =>
          l -> l' -> Constraints
 l %== l' = Constraints [(toAffineExpression l %- toAffineExpression l', Equal)]
 
+-- | Declares that first argument is greated or equal to second one.
 (%>=) :: (AffineExpressionLike l, AffineExpressionLike l') =>
          l -> l' -> Constraints
 l %>= l' = Constraints [(toAffineExpression l %- toAffineExpression l', GreaterOrEqual)]
 
-infix 4 %<=, %==, %>=
+-- | Declares that first argument is greated or equal to second one.
+(%>) :: (AffineExpressionLike l, AffineExpressionLike l') =>
+        l -> l' -> Constraints
+l %> l' = Constraints [(toAffineExpression l %- toAffineExpression l', GreaterThan)]
 
+infix 4 %<, %<=, %==, %>=, %>
+
+-- | Combines two constraints together
 (%&&) :: Constraints -> Constraints -> Constraints
 Constraints s %&& Constraints s' = Constraints (s ++ s')
 
 infixr 3 %&&
 
+-- | List of variables that are an integer
 newtype Integers = Integers [Var] deriving (Eq,Typeable)
 
+-- | A solution to a MIP problem.
 newtype MIPSolution s = MIPSolution {_solution_ :: Map String s} deriving (Eq,Show)
 makeLenses ''MIPSolution
 
@@ -211,7 +245,12 @@ numberCs :: Constraints -> State NumberState [(Integer, [(PPLDimentionType, Inte
 numberCs (Constraints cs) =
   forM cs $ \(le, ct) -> (\(s, lc) -> (s, lc, ct)) <$> numberAe le
 
-mipSolve :: AffineExpressionLike l => Constraints -> Objective l -> Integers -> SolutionResult (MIPSolution Rational)
+-- | Solve a linear problem.
+lpSolve :: (AffineExpressionLike l) => Constraints -> Objective l -> SolutionResult (MIPSolution Rational)
+lpSolve cs obj = mipSolve cs obj $! Integers []
+
+-- | Solve a mixed integer problem.
+mipSolve :: (AffineExpressionLike l) => Constraints -> Objective l -> Integers -> SolutionResult (MIPSolution Rational)
 mipSolve cs obj (Integers int) = unsafePerformIO $! do
   pplInitialize
   (renumber <$>) <$> (withMipProblem dim cs' obj' int' $ solve dim)
@@ -225,4 +264,3 @@ mipSolve cs obj (Integers int) = unsafePerformIO $! do
 -- Lens helpers
 makePrisms ''Objective
 makePrisms ''SolutionResult
-
