@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -36,6 +37,7 @@ module Data.PPL.MIP
     name,
     constant,
     lvar,
+    coeff,
     _Unfeasable,
     _Unbounded,
     _Optimized,
@@ -86,6 +88,7 @@ makeLenses ''AffineExpression
 instance HasLinearExpression AffineExpression where
   linearExpression = linear_
 
+
 type instance Index LinearExpression = Var
 type instance IxValue LinearExpression = Rational
 instance Ixed LinearExpression where
@@ -96,6 +99,8 @@ lvar (Var v) = coeff_ . at v . lens (maybe 0 id) (const conv)
                where conv 0 = Nothing
                      conv x = Just $! x
 
+coeff :: HasLinearExpression l => IndexedTraversal' Var l Rational
+coeff f = coeff_ . iso M.toList M.fromList $ traverse (\(x, a) -> (,) x <$> indexed f (Var x) a)
 
 genStr :: HasLinearExpression l => Maybe String -> l -> Maybe String
 genStr = ifoldrOf (coeff_ . itraversed) f
@@ -114,6 +119,14 @@ instance Show AffineExpression where
                        (0, _) -> Nothing
                        (x, 1) -> Just $! show x
                        (x, y) -> Just $! show x ++ "/" ++ show y
+
+instance Monoid LinearExpression where
+  mempty = LinearExpression M.empty
+  mappend = (%+)
+
+instance Monoid AffineExpression where
+  mempty = AffineExpression mempty 0
+  mappend = (%+)
 
 -- | Anything that can be converted to an affine expression
 class AffineExpressionLike l where
@@ -184,6 +197,14 @@ instance Add Rational LinearExpression AffineExpression where
 instance Add AffineExpression AffineExpression AffineExpression where
   (AffineExpression le s) %+ (AffineExpression le' s') = AffineExpression (le %+ le') (s + s')
   (AffineExpression le s) %- (AffineExpression le' s') = AffineExpression (le %- le') (s - s')
+
+instance Add AffineExpression LinearExpression AffineExpression where
+  (AffineExpression le s) %+ le' = AffineExpression (le %+ le') s
+  (AffineExpression le s) %- le' = AffineExpression (le %- le') s
+
+instance Add LinearExpression AffineExpression AffineExpression where
+  le %+ (AffineExpression le' s) = AffineExpression (le %+ le') s
+  le %- (AffineExpression le' s) = AffineExpression (le %- le') (negate s)
 
 instance Add AffineExpression Var AffineExpression where
   (AffineExpression le s) %+ v = AffineExpression (le %+ v) s

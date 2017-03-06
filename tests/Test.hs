@@ -1,6 +1,9 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
 import Control.Lens
 import Control.Lens.Extras
 import Data.PPL.MIP
+import Data.PPL.MIP.TH
 import Test.QuickCheck
 
 test1 :: Property
@@ -48,6 +51,16 @@ test5 = property $ is _Unfeasable sl
               ints = Integers []
               sl = mipSolve cs o ints
 
+test6 :: Property
+test6 = is _Optimized sl .&&.
+        sl ^?! _Optimized . ix (var "x") === 4 .&&.
+        sl ^?! _Optimized . ix (var "y") === 4.5
+        where cs = [affexp|2y|] %>= [affexp|2x + 1|] %&&
+                   sc 10 %* var "y" %<= sc 13 %+ sc 8 %* var "x"
+              o = Maximize $! [linexp|x + y|]
+              ints = Integers []
+              sl = mipSolve cs o ints
+
 main :: IO ()
 main = do
   quickCheck test1
@@ -55,3 +68,4 @@ main = do
   quickCheck test3
   quickCheck test4
   quickCheck test5
+  quickCheck test6
