@@ -37,38 +37,38 @@ parseScalarPrefix = (string "-" *> skipSpace *> (negate <$> parseScalarPrefix)) 
 parseScalarSuffix :: Parser Rational
 parseScalarSuffix = maybe 1 id <$> optional (optional (string "*" <* skipSpace) *> parseScalar)
 
-parseLinearExpr :: Parser LinearExpression
+parseLinearExpr :: Parser (LinearExpression Rational)
 parseLinearExpr = do
   p <- parseScalarPrefix
   l <- ((1 %*) <$> parseVar) <|> (string "(" *> skipSpace *> parseLinear <* string ")" <* skipSpace)
   s <- parseScalarSuffix
-  return $! (p * s) %* l
+  return $! sc (p * s) %* l
 
-parseLinearTail :: Parser LinearExpression
-parseLinearTail = (%*) <$> (((1 <$ string "+") <|> (-1 <$ string "-")) <* skipSpace) <*> parseLinearExpr
+parseLinearTail :: Parser (LinearExpression Rational)
+parseLinearTail = (%*) <$> (((sc 1 <$ string "+") <|> (sc (-1) <$ string "-")) <* skipSpace) <*> parseLinearExpr
 
-parseLinear :: Parser LinearExpression
+parseLinear :: Parser (LinearExpression Rational)
 parseLinear = do
    l <- parseLinearExpr
    r <- many parseLinearTail
    return $! F.fold (l:r)
 
-mulBy :: Rational -> Either AffineExpression LinearExpression -> Either AffineExpression LinearExpression
-mulBy r = (r %*) +++ (r %*)
+mulBy :: Rational -> Either (AffineExpression Rational) (LinearExpression Rational) -> Either (AffineExpression Rational) (LinearExpression Rational)
+mulBy r = (sc r %*) +++ (sc r %*)
 
-parseExpr :: Parser (Either AffineExpression LinearExpression)
+parseExpr :: Parser (Either (AffineExpression Rational) (LinearExpression Rational))
 parseExpr = (do
   p <- parseScalarPrefix
   l <- (Right . (1 %*) <$> parseVar) <|>
        (string "(" *> skipSpace *> parseAff <* string ")" <* skipSpace)
   s <- parseScalarSuffix
   return . mulBy (p * s) $ l) <|>
-  (Left . ((mempty ::AffineExpression) %+) <$> parseScalar)
+  (Left . ((mempty ::AffineExpression Rational) %+) . sc <$> parseScalar)
 
-parseTail :: Parser (Either AffineExpression LinearExpression)
+parseTail :: Parser (Either (AffineExpression Rational) (LinearExpression Rational))
 parseTail = mulBy <$> (((1 <$ string "+") <|> (-1 <$ string "-")) <* skipSpace) <*> parseExpr
 
-parseAff :: Parser (Either AffineExpression LinearExpression)
+parseAff :: Parser (Either (AffineExpression Rational) (LinearExpression Rational))
 parseAff = do
   l <- parseExpr
   r <- many parseTail
@@ -82,10 +82,12 @@ linexp = QuasiQuoter {quoteExp = linexpQuoteExpr, quotePat = undefined, quoteTyp
          where linexpQuoteExpr str =
                  let le = either error id . parseOnly (skipSpace *> parseLinear <* endOfInput) $ T.pack str
                      cf = le ^.. coeff . withIndex . iso (first (^. name)) (first var) . to vExpr
-                     vExpr (x, a) = InfixE (Just . LitE . RationalL $ a) (VarE '(%*)) (Just $ AppE (VarE 'var ) (LitE . StringL $ x))
+                     vExpr (x, a) = let x' = return . LitE . StringL $ x
+                                        a' = return . LitE . RationalL $ a
+                                    in [| ($a' %* var $x') :: LinearExpression Rational |]
                  in if null cf
-                      then [|mempty :: LinearExpression|]
-                      else return $! F.foldr1 (\l r -> InfixE (Just l) (VarE '(%+)) (Just r)) cf
+                      then [|mempty :: LinearExpression Rational|]
+                      else F.foldr1 (\e ac -> [| $e %+ $ac |]) cf
 
 affexp :: QuasiQuoter
 affexp = QuasiQuoter {quoteExp = affexpQuoteExpr, quotePat = undefined, quoteType = undefined, quoteDec = undefined}
@@ -97,6 +99,6 @@ affexp = QuasiQuoter {quoteExp = affexpQuoteExpr, quotePat = undefined, quoteTyp
                      ce = lift $! le ^. constant
                  cf <- foldrMOf (coeff . withIndex . iso (first (^. name)) (first var)) procElem Nothing le
                  case cf of
-                   Just e -> [|($e %+ sc $ce) :: AffineExpression|]
-                   Nothing -> [|(mempty :: AffineExpression) %+ sc $ce|]
+                   Just e -> [|(($e :: LinearExpression Rational) %+ sc $ce) :: AffineExpression Rational|]
+                   Nothing -> [|(mempty :: AffineExpression Rational) %+ sc $ce|]
 

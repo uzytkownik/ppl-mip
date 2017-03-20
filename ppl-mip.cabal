@@ -18,6 +18,7 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Data.PPL.MIP,
+                       Data.PPL.MIP.Monad,
                        Data.PPL.MIP.TH
   other-modules:       Foreign.PPL
   other-extensions:    FlexibleInstances,
@@ -27,11 +28,11 @@ library
                        containers >= 0.5.7.1 && < 0.6.0.0,
                        lens >=4.14 && <4.15,
                        mtl >= 2.2.1 && < 2.3.0,
+                       semigroupoids >= 5.1 && < 5.2,
                        text >=1.2 && <1.3,
                        template-haskell >=2.11 && <2.12
   extra-libraries:     gmp, ppl_c
   default-language:    Haskell2010
-  ghc-options:         -Wall -Werror
 
 test-suite test-ppl
   hs-source-dirs:      tests
